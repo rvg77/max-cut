@@ -2,6 +2,8 @@ import cvxpy as cvx
 import networkx as nx
 import numpy as np
 
+from numba import jit
+
 import matplotlib.pyplot as plt
 
 from tqdm import tqdm_notebook
@@ -17,7 +19,6 @@ def split(cut):
 def cut_cost1(cut, G):
     S, T = split(cut)
     l = list(nx.edge_boundary(G, S, T))
-    # print(l)
     return len(l)
 
 
@@ -35,47 +36,46 @@ def brute_force_max_cut(G):
     """Compute maximum cut of a graph considering all the possible cuts."""""
 
     n = G.number_of_nodes()
-    L = nx.laplacian_matrix(G)
+    L = nx.laplacian_matrix(G, nodelist=sorted(G.nodes))
 
     max_cut_value = 0
     max_cut = 0
 
-    for int_cut in tqdm_notebook(range(1, 2**n)):
+    for int_cut in range(1, 2**(n-1) + 1):
         cut = int_to_binary(n, int_cut)
-        value = cut_cost1(cut, G)
+        value = cut_cost(cut * 2 - 1, L)
 
         if value > max_cut_value:
             max_cut_value = value
             max_cut = cut
 
-    return max_cut, max_cut_value
+    return max_cut_value
 
 
 def SDP_max_cut(G):
     n = G.number_of_nodes()
-    L = nx.laplacian_matrix(G)
+    L = nx.laplacian_matrix(G, nodelist=sorted(G.nodes))
 
     # SDP solution
     X = cvx.Variable((n, n), PSD=True)
     obj = 0.25 * cvx.trace(L.toarray() * X)
     constr = [cvx.diag(X) == 1]
     problem = cvx.Problem(cvx.Maximize(obj), constraints=constr)
-    problem.solve(verbose=True, solver=cvx.SCS)
+    problem.solve(solver=cvx.SCS)
 
     # GW algorithm
     u, s, v = np.linalg.svd(X.value)
     U = u * np.sqrt(s)
-    # tunable
-    num_trials = 10 ** 4
+
+    num_trials = 30 # УЗБЧ
     gw_results = np.zeros(num_trials)
-    for i in tqdm_notebook(range(num_trials)):
+    for i in range(num_trials):
         r = np.random.randn(n)
         r = r / np.linalg.norm(r)
-        cut = np.sign(U.T @ r)
-        gw_results[i] = cut_cost1((cut + 1) / 2, G)
+        cut = np.sign(r @ U.T)
+        gw_results[i] = cut_cost(cut, L)
 
     # Verbose result
     _ = plt.hist(gw_results, bins=100)
-    print('Mean =', np.mean(gw_results), 'std =', np.std(gw_results), 'max =', np.max(gw_results))
-    return np.max(gw_results)
+    return (np.mean(gw_results), np.max(gw_results))
 
